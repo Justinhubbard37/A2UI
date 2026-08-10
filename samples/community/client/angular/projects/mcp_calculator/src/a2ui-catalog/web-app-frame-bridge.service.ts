@@ -23,6 +23,7 @@ import {
   A2uiMessageType,
   IncomingWebFrameMessage,
   IncomingWebFrameMessageSchema,
+  validateMessageSecurity,
 } from './web-frame-messages';
 
 export interface WebAppFrameBridgeConfig {
@@ -409,6 +410,13 @@ export class WebAppFrameBridgeService {
 
       this.appPort.onmessage = async (event: MessageEvent) => {
         if (!this.config) return;
+
+        const securityCheck = validateMessageSecurity(event.data);
+        if (!securityCheck.valid) {
+          console.warn('[WebAppFrameBridge] Dropping insecure message:', securityCheck.reason);
+          return;
+        }
+
         const parsedData = IncomingWebFrameMessageSchema.safeParse(event.data);
         if (!parsedData.success) {
           return;

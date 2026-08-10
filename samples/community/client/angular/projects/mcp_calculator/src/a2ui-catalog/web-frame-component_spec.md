@@ -548,6 +548,9 @@ Least Privilege:
   applications from monopolizing the host's main thread or initiating infinite render loops, the
   protocol mandates deep-equality checks for state updates and strict throttling/clamping for
   dynamic resize requests.
+- **Prototype Pollution & Deep JSON Defense:** Guarding host bridge services and backend parsers
+  against prototype pollution keys (`__proto__`, `constructor`, `prototype`) and recursive stack
+  overflow attacks from deeply nested structures (e.g., >10 levels) or oversized payloads (e.g., >64 KB).
 
 > [!NOTE] **CSP Delivery Nuance:** There is a fundamental difference in how Content Security
 > Policies (CSP) are enforced between the two component types. When fetching the application by URL
@@ -645,6 +648,10 @@ The initialization payload must define:
 When the embedded app dispatches a message over the dedicated `MessagePort`, the WebAppFrame component executes the following pipeline before interacting with the host's surface or the backend:
 
 - **Origin Check (Fallback):** The component verifies that `event.origin` matches the expected allowlisted origin (if available via the port).
+- **Payload Sanitization & Security Verification:**
+  - _Payload Size Enforcement:_ The component verifies that the serialized message size does not exceed the maximum limit of 64 KB (65,536 bytes).
+  - _Nesting Depth Inspection:_ The component inspects the object hierarchy to ensure the JSON nesting depth does not exceed 10 levels.
+  - _Prototype Pollution Rejection:_ The component recursively checks all property names in the message payload and rejects any message containing forbidden prototype pollution keys (`__proto__`, `constructor`, `prototype`).
 - **Schema Enforcement:**
   - _For `a2ui_action`:_ The component looks up the `action` string in `allowedEvents`. It runs the
     `data` payload against the associated schema (e.g., using a JSON Schema validator).
@@ -652,22 +659,25 @@ When the embedded app dispatches a message over the dedicated `MessagePort`, the
     and validates the `value`.
   - _For `a2ui_client_function_call`:_ The component verifies the function is in `allowedFunctions`
     and validates the arguments against the function's schema.
-- **Automatic Rejection:** If the payload fails schema validation, references an unauthorized key,
-  or if the action does not exist in the allowed list, the component **silently drops the message**
-  and logs a security violation warning to the host console. It must not forward malformed data to
-  the backend.
+- **Automatic Rejection:** If the payload fails schema validation, contains prototype pollution keys, exceeds nesting/size limits, references an unauthorized key, or if the action does not exist in the allowed list, the component **silently drops the message** and logs a security violation warning to the host console. It must not forward malformed data to the backend.
 
-### 5.5.3. Protection Against Denial of Service (DoS)
+### 5.5.3. Denial of Service (DoS) Prevention and Rate Limiting
 
-To prevent a compromised iframe from exhausting the host's resources or launching a DoS attack
-against the A2UI server via rapid event spamming:
+To prevent a compromised iframe from exhausting host resources, thrashing the main UI thread, or flooding the A2UI server:
 
-- The WebAppFrame component must implement a configurable **Rate Limiter / Debouncer** on the
-  message event listener.
-- The component must drop messages that exceed a safe threshold (e.g., > 10 events per second) and
-  log a rate-limit warning.
+- **Rate Limiting:** The WebAppFrame component must implement a configurable **Rate Limiter / Debouncer** on the message event listener, dropping messages that exceed a safe threshold (e.g., > 10 events per second) and logging a rate-limit warning.
+- **Dynamic Resize Throttling & Clamping:** The host must clamp and throttle resize events (as specified in Section 5.4) to prevent rapid redraw thrashing and UI jitter.
+- **Deep-Equality Cycle Prevention:** The host and embedded app must enforce structural equality checks on state updates to prevent infinite update ping-pong loops.
 
-### 5.5.4. Trusted Source Bypass
+### 5.5.4. JSON Payload Protection and Prototype Pollution Defense
+
+To prevent untrusted applications from crashing host parsers via stack exhaustion, exhausting memory, or polluting JavaScript object prototypes, the host bridge enforces the following guardrails on all incoming `a2ui_action`, `a2ui_data_model_change`, and `a2ui_function_call` messages:
+
+- **Prototype Pollution Key Rejection:** Host bridge services and backend parsers must recursively inspect all incoming message payloads and reject any payload containing `__proto__`, `constructor`, or `prototype` property keys at any depth.
+- **Maximum JSON Nesting Depth:** The host enforces a strict maximum nesting depth of 10 levels for JSON objects and arrays. Messages exceeding this threshold must be rejected before serialization to prevent call stack exhaustion and `RangeError` crashes.
+- **Maximum Message Payload Size:** The host enforces a maximum serialized payload size limit of 64 KB (65,536 bytes) per message to mitigate memory exhaustion and denial-of-service attacks.
+
+### 5.5.5. Trusted Source Bypass
 
 In scenarios where the embedded application is a trusted first-party tool, the strict schema
 validation overhead can be bypassed to improve performance and allow arbitrary data payloads.
